@@ -1,0 +1,37 @@
+[local]
+localhost
+
+[local:vars]
+ansible_user=your_username
+ansible_connection=local
+
+[fusion]
+fusion001 ansible_host=8.8.8.8
+
+[fusion:vars]
+ansible_user=your_username
+
+
+[vms]
+
+
+[active_vms]
+
+
+[all_vms:children]
+vms
+active_vms
+
+[all_vms:vars]
+ansible_user=your_username
+ansible_connection=ssh
+ansible_become_pass=your_pass
+ansible_ssh_private_key_file=~/.ssh/this_key.key
+
+
+[guacamole]
+guacamole001 ansible_host=8.8.4.4
+
+[guacamole:vars]
+ansible_user=your_username
+ansible_ssh_private_key_file=~/.ssh/that_key.key

@@ -1,0 +1,141 @@
+# Provision VM in Fusion from source DMG, enable VNC and plug it into Guacamole for clientless remote control.
+# file: vm_build.yml
+---
+
+- hosts: fusion
+  become: True
+
+  vars_files:
+    - vars/fusion.yml
+
+  tasks:
+
+  - name: Generating random name for VM
+    random_name: generate_name=True
+
+  - file: path="{{ files_dir }}" state=directory mode=0755
+
+  # - copy: src=./files/edgeVM-10.11.3-15D21.hfs.dmg dest={{ source_dmg }} owner=admin group=admin mode=0777 force=no
+
+  - name: Mounting source DMG
+    mount_dmg:
+      source_dmg="{{ source_dmg }}"
+
+  - name: Creating VMDK image
+    create_vmdk:
+      disk_id="{{ disk_id }}"
+      fusion_path="{{ fusion_path }}"
+      output_dir="{{ output_dir }}"
+      output_name="{{ vm_name }}"
+
+  - name: Unmounting the source DMG
+    unmount_dmg:
+      disk_id="{{ disk_id }}"
+
+  - name: Creating a valid VMX file
+    create_vmx:
+      vmpath="{{ vmpath }}"
+      output_name="{{ vm_name }}"
+      mem_size="{{ mem_size }}"
+      connection_type="{{ connection_type }}"
+
+  - name: Setting permissions for the new VMDK image
+    set_perms:
+      path="{{ vmpath }}"
+      user="{{ owner_name }}"
+      group="{{ group_name }}"
+
+
+- hosts: fusion
+
+  vars_files:
+    - vars/fusion.yml
+  tasks:
+
+  - name: Generate random password for VNC
+    vnc_pass:
+      passwd_length="{{ passwd_length }}"
+
+  - name: Starting the VM and getting IP address
+    vmx_control:
+      vmx_path="{{ vmx }}"
+      vm_mode="{{ vm_mode }}"
+      delay_after_firstboot="{{ delay_after_firstboot }}"
+      get_ip=True
+
+  - add_host:
+      name="{{ vm_ip }}" groups=vms
+
+
+- hosts: vms
+
+  tasks:
+
+  - name: Set up authorized_keys for the admin user
+    authorized_key:
+      user=admin key="{{ lookup('file', '~/.ssh/vmlab_brian.key.pub') }}"
+
+- hosts: local
+
+  tasks:
+
+  - name: Adding vm to active_vms group in hosts file
+    lineinfile:
+      dest="./hosts"
+      insertafter="\[active_vms\]"
+      line="{{ hostvars['fusion001'].vm_name }} ansible_host={{ hostvars['fusion001'].vm_ip }}"
+
+- hosts: vms
+  become: True
+
+  tasks:
+
+  - name: Set names for OS X
+    set_names:
+      vm_name="{{ hostvars['fusion001'].vm_name }}"
+
+  - name: Enable VNC and set password
+    command: /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -clientopts -setvnclegacy -vnclegacy yes -clientopts -setvncpw -vncpw {{ hostvars['fusion001'].vnc_pass }} -restart -agent -privs -all
+
+  - name: Setting time zone
+    command: /usr/sbin/systemsetup -settimezone America/Chicago
+
+  - name: Running ECUpgrade policy from Casper
+    shell: /usr/local/bin/jamf policy -trigger ECUpgrade && touch "/Library/Application Support/EDGE/.ecupgrade_done"
+    args:
+      creates: "/Library/Application Support/EDGE/.ecupgrade_done"
+
+  - name: Running jamf manage to pull down profiles
+    command: /usr/local/bin/jamf manage
+
+  - name: Updating inventory with JSS
+    command: /usr/local/bin/jamf recon
+
+
+- hosts: guacamole
+
+  tasks:
+
+  - name: Adding user authentication block
+    blockinfile:
+      dest: /home/cloud-user/.guacamole/user-mapping.xml
+      marker: "<!-- {mark} Added via Ansible at {{ ansible_date_time.time }} on {{ ansible_date_time.date }} -->"
+      insertafter: "<user-mapping>"
+      content: |
+        <authorize username="{{ hostvars['fusion001'].vm_name }}" password="{{ hostvars['fusion001'].vnc_pass }}">
+            <connection name="{{ hostvars['fusion001'].vm_name }}">
+                <protocol>vnc</protocol>
+                <param name="hostname">{{ hostvars['fusion001'].vm_ip }}</param>
+                <param name="port">5900</param>
+                <param name="password">{{ hostvars['fusion001'].vnc_pass }}</param>
+            </connection>
+        </authorize>
+    notify:
+      - restart tomcat
+
+- hosts: guacamole
+  become: true
+
+  handlers:
+  - name: restart tomcat
+    service: name=tomcat state=restarted

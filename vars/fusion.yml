@@ -1,0 +1,16 @@
+---
+# file: fusion.yml
+#
+# Example variables, change to your values.
+remote_user: admin
+source_dmg: '/Users/Shared/input/elcap_base.dmg'
+fusion_path: '/Applications/VMWare Fusion.app/'
+output_dir: '/Users/Shared/output'
+mem_size: 4096
+files_dir: "/Users/Shared/files"
+connection_type: 'bridged'
+owner_name: 'admin'
+group_name: 'admin'
+passwd_length: 20
+vm_mode: 'started'
+delay_after_firstboot: 360
